@@ -106,14 +106,14 @@ class Util {
                     '-ss',
                     '00:00:00.0',
                     '-t',
-                    '00:00:05.0',
+                    '00:00:010.0',
                     '-preset',
                     'default',
                     '-an',
                     '-vsync',
                     '0',
                     '-s',
-                    '512:512',
+                    '300:300',
                 ])
                 .toFormat('webp')
                 .save(tempFile);
