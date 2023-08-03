@@ -763,6 +763,7 @@ class Client extends EventEmitter {
             console.warn('Mentions with an array of Contact are now deprecated. See more at https://github.com/pedroslopez/whatsapp-web.js/pull/2166.');
             options.mentions = options.mentions.map(a => a.id._serialized);
         }
+        
         let internalOptions = {
             linkPreview: options.linkPreview === false ? undefined : true,
             sendAudioAsVoice: options.sendAudioAsVoice,
@@ -776,7 +777,9 @@ class Client extends EventEmitter {
             extraOptions: options.extra
         };
 
+
         const sendSeen = typeof options.sendSeen === 'undefined' ? true : options.sendSeen;
+
 
         if (content instanceof MessageMedia) {
             internalOptions.attachment = content;
@@ -804,7 +807,7 @@ class Client extends EventEmitter {
             internalOptions.list = content;
             content = '';
         }
-
+        
         if (internalOptions.sendMediaAsSticker && internalOptions.attachment) {
             internalOptions.attachment = await Util.formatToWebpSticker(
                 internalOptions.attachment, {
@@ -815,21 +818,71 @@ class Client extends EventEmitter {
             );
         }
 
+
+        const isBigFile = internalOptions.attachment?.data?.length > (1024 * 1024 * 79);
+
+        if (isBigFile) {
+			let startDivision = 2
+            let middle = internalOptions.attachment.data.length / startDivision;
+            let currentIndex = 0;
+			let passes = 0;
+            
+			while (middle > (1024 * 1024 * 50)){
+				startDivision += 1
+				middle = Math.floor(internalOptions.attachment.data.length / startDivision);
+			}
+            
+			while(currentIndex < internalOptions.attachment.data.length){
+				let chunkPiece = middle
+				if(currentIndex + middle > internalOptions.attachment.data.length){
+					chunkPiece = internalOptions.attachment.data.length - currentIndex
+				}
+				await this.pupPage.evaluate(async (chatId, chunk,passes) => {
+					if (chunk) {
+						window.Store[`mediaChunk_${chatId}_${passes}`] = chunk;
+					}
+				}, chatId, internalOptions.attachment.data.substring(currentIndex, currentIndex+chunkPiece),passes);
+				currentIndex += chunkPiece
+				passes += 1
+			}
+            
+            internalOptions.attachment = new MessageMedia(internalOptions.attachment.mimetype,"",internalOptions.attachment.filename,internalOptions.attachment.filesize);
+            
+			await this.pupPage.evaluate(async (chatId,passes) => {
+					window.Store[`mediaChunk_${chatId}_passes`] = passes;	
+			}, chatId,passes);
+        }
+
         const newMessage = await this.pupPage.evaluate(async (chatId, message, options, sendSeen) => {
             const chatWid = window.Store.WidFactory.createWid(chatId);
             const chat = await window.Store.Chat.find(chatWid);
+
 
 
             if (sendSeen) {
                 window.WWebJS.sendSeen(chatId);
             }
 
+            if(window.Store[`mediaChunk_${chatId}_passes`]) {
+				options.attachment.data = ''
+                const maxPasses = window.Store[`mediaChunk_${chatId}_passes`]
+				let currPass = 0;
+				while (currPass < maxPasses){
+					options.attachment.data += window.Store[`mediaChunk_${chatId}_${currPass}`]
+					delete window.Store[`mediaChunk_${chatId}_${currPass}`];
+					currPass += 1;			
+				}
+				delete window.Store[`mediaChunk_${chatId}_passes`];
+            }
+
+
             const msg = await window.WWebJS.sendMessage(chat, message, options, sendSeen);
             return msg.serialize();
         }, chatId, content, internalOptions, sendSeen);
 
+
         return new Message(this, newMessage);
-    }
+    } 
     
     /**
      * Searches for messages
